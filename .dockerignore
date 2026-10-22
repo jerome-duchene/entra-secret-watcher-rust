@@ -1,0 +1,11 @@
+**/.git
+**/.github
+**/.vs
+**/.vscode
+**/.idea
+target
+.dockerignore
+docker-compose*.yml
+Dockerfile
+*.md
+grafana

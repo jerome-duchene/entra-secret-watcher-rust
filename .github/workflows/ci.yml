@@ -1,0 +1,125 @@
+name: CI / Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─── 1. Checks and tests ──────────────────────────────────────────────────────
+  test:
+    name: Format, lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  # ─── 2. Docker publish ────────────────────────────────────────────────────────
+  publish:
+    name: Publish Docker image
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          build_flags=()
+          while IFS= read -r tag;   do [ -n "$tag" ]   && build_flags+=(--tag   "$tag");   done <<< "$TAGS"
+          while IFS= read -r label; do [ -n "$label" ] && build_flags+=(--label "$label"); done <<< "$LABELS"
+
+          for attempt in 1 2 3; do
+            echo "=== Build attempt $attempt/3 ==="
+            if docker buildx build \
+                --platform linux/amd64,linux/arm64 \
+                --push \
+                "${build_flags[@]}" \
+                --cache-from type=gha \
+                --cache-to type=gha,mode=max \
+                .; then
+              exit 0
+            fi
+            [ "$attempt" -lt 3 ] && echo "Retrying in 90s (MCR rate limit)..." && sleep 90
+          done
+          exit 1
+
+  # ─── 3. GitHub Release ────────────────────────────────────────────────────────
+  release:
+    name: GitHub Release
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create release (notes from CHANGELOG.md, else auto-generated)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          # Extract the "## [x.y.z]" section of CHANGELOG.md
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if grep -q '[^[:space:]]' release-notes.md; then
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+          fi

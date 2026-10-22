@@ -1,0 +1,28 @@
+# Categories used by GitHub's auto-generated release notes (fallback when the
+# CHANGELOG has no section for the tag). Label pull requests accordingly.
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+    authors:
+      - dependabot
+  categories:
+    - title: ✨ New features
+      labels:
+        - feature
+        - enhancement
+    - title: 🐛 Bug fixes
+      labels:
+        - bug
+        - fix
+    - title: 📚 Documentation
+      labels:
+        - documentation
+    - title: 🔧 Maintenance
+      labels:
+        - chore
+        - dependencies
+        - ci
+    - title: Other changes
+      labels:
+        - "*"

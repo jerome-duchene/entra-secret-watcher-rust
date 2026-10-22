@@ -1,0 +1,74 @@
+services:
+  # --------------------------------------------------
+  # Tenant: Contoso (Gotify notifications)
+  # --------------------------------------------------
+  watcher-contoso:
+    image: entra-secret-watcher:latest
+    build: .
+    container_name: esw-contoso
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      # Entra ID
+      Entra__TenantId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      Entra__ClientId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      Entra__ClientSecret: "your-client-secret"
+      Entra__TenantName: "Contoso"
+
+      # Watcher
+      Watcher__ThresholdDays: "30"
+      Watcher__CronSchedule: "0 8 * * *"
+      # Watcher__RunOnStartup: "true"                       # also scan at startup
+      # Watcher__ManualTriggerSecret: "a-long-random-secret"  # enables POST /scan (header X-Scan-Token)
+      Watcher__DryRun: "false"
+      Watcher__GroupedReport: "true"
+
+      # Notification — Gotify
+      Notification__Gotify__Enabled: "true"
+      Notification__Gotify__Url: "https://gotify.example.com"
+      Notification__Gotify__Token: "your-gotify-token"
+
+      # OpenTelemetry (optional)
+      # OpenTelemetry__Enabled: "true"
+      # OpenTelemetry__Endpoint: "http://alloy:4317"
+      # OpenTelemetry__Protocol: "Grpc"   # or HttpProtobuf (base URL, e.g. http://alloy:4318)
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.esw-contoso.rule=Host(`esw-contoso.example.com`)"
+      - "traefik.http.services.esw-contoso.loadbalancer.server.port=8080"
+
+  # --------------------------------------------------
+  # Tenant: Fabrikam (Email + Teams notifications)
+  # --------------------------------------------------
+  watcher-fabrikam:
+    image: entra-secret-watcher:latest
+    container_name: esw-fabrikam
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      # Entra ID
+      Entra__TenantId: "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+      Entra__ClientId: "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+      Entra__ClientSecret: "your-client-secret"
+      Entra__TenantName: "Fabrikam"
+
+      # Watcher
+      Watcher__ThresholdDays: "30"
+      Watcher__CronSchedule: "0 8 * * *"
+
+      # Notification — Email via Graph API
+      Notification__Email__Enabled: "true"
+      Notification__Email__From: "noreply@fabrikam.com"
+      Notification__Email__To: "admin@fabrikam.com,security@fabrikam.com"
+
+      # Notification — Teams via Incoming Webhook
+      Notification__Teams__Enabled: "true"
+      Notification__Teams__WebhookUrl: "https://outlook.office.com/webhook/xxxxxxxx/IncomingWebhook/yyyyyyyy/zzzzzzzz"
+
+      # Notification — Generic webhook (one POST per credential, e.g. Jira Automation)
+      # Notification__Webhook__Enabled: "true"
+      # Notification__Webhook__Url: "https://automation.atlassian.com/pro/hooks/xxxxxxxx"
+      # Notification__Webhook__Secret: "shared-secret"
+      # Notification__Webhook__SecretHeaderName: "X-Automation-Webhook-Token"
