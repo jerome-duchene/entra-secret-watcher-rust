@@ -39,7 +39,7 @@ build and test in a container instead, e.g.
 
 ## Conventions
 
-- Tests live next to the code (`#[cfg(test)]`); HTTP is mocked with `wiremock`, routers are driven with `tower::ServiceExt::oneshot`. `models::test_support` has shared fixtures.
+- Unit tests sit in a sibling file declared with `#[cfg(test)] mod tests;` (e.g. `src/graph.rs` → `src/graph/tests.rs`; `use super::*;` keeps access to private items), so business code files stay free of tests (except the tiny `models.rs`). End-to-end scenarios that only use the public API live in `tests/`. HTTP is mocked with `wiremock`, routers are driven with `tower::ServiceExt::oneshot`, and `models::test_support` has shared fixtures.
 - `rustfmt.toml` sets `max_width = 120`; run `cargo fmt --all` before committing.
 - Keep `README.md` configuration tables and `CHANGELOG.md` (`[Unreleased]`) in sync with behaviour changes: the release workflow takes the GitHub Release notes from the matching CHANGELOG section.
 - `grafana/` is shared with the .NET project and relies on the `esw_*` metric names and their labels: never rename them.
