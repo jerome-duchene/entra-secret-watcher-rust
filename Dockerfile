@@ -10,6 +10,17 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
     && rm -rf src
 
 COPY src ./src
+
+# Version of the release (the git tag without its "v"), so that the binary reports it in its logs.
+# Without it, the version of Cargo.toml is kept.
+ARG VERSION=
+RUN if [ -n "$VERSION" ]; then \
+        echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$' \
+            || { echo "Invalid VERSION '$VERSION'"; exit 1; }; \
+        sed -i "1,/^version = /s/^version = .*/version = \"$VERSION\"/" Cargo.toml; \
+        grep -q "^version = \"$VERSION\"" Cargo.toml || { echo "Could not set the version"; exit 1; }; \
+    fi
+
 # Make sure cargo sees the real sources as newer than the placeholders
 RUN touch src/main.rs src/lib.rs && cargo build --release
 

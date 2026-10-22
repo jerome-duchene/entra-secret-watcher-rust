@@ -73,8 +73,10 @@ jobs:
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
           LABELS: ${{ steps.meta.outputs.labels }}
+          TAG: ${{ github.ref_name }}
         run: |
-          build_flags=()
+          # The binary reports the version of the tag (v1.2.3 -> 1.2.3)
+          build_flags=(--build-arg "VERSION=${TAG#v}")
           while IFS= read -r tag;   do [ -n "$tag" ]   && build_flags+=(--tag   "$tag");   done <<< "$TAGS"
           while IFS= read -r label; do [ -n "$label" ] && build_flags+=(--label "$label"); done <<< "$LABELS"
 

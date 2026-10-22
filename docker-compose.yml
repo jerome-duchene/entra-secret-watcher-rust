@@ -3,7 +3,7 @@ services:
   # Tenant: Contoso (Gotify notifications)
   # --------------------------------------------------
   watcher-contoso:
-    image: entra-secret-watcher:latest
+    image: entra-secret-watcher-rust:latest
     build: .
     container_name: esw-contoso
     restart: unless-stopped
@@ -42,7 +42,7 @@ services:
   # Tenant: Fabrikam (Email + Teams notifications)
   # --------------------------------------------------
   watcher-fabrikam:
-    image: entra-secret-watcher:latest
+    image: entra-secret-watcher-rust:latest
     container_name: esw-fabrikam
     restart: unless-stopped
     ports:

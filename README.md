@@ -64,7 +64,7 @@ Add a client secret (or certificate) and note the value — you'll need it for c
 docker pull ghcr.io/jerome-duchene/entra-secret-watcher-rust:latest
 
 # Or build locally
-docker build -t entra-secret-watcher:latest .
+docker build -t entra-secret-watcher-rust:latest .
 ```
 
 ### 2. Run with Docker
@@ -81,7 +81,7 @@ docker run -d \
   -e Notification__Gotify__Enabled="true" \
   -e Notification__Gotify__Url="https://gotify.example.com" \
   -e Notification__Gotify__Token="your-gotify-token" \
-  entra-secret-watcher:latest
+  entra-secret-watcher-rust:latest
 ```
 
 ### 3. Verify
@@ -344,14 +344,14 @@ Use `docker-compose.yml` to deploy one container per tenant:
 ```yaml
 services:
   watcher-contoso:
-    image: entra-secret-watcher:latest
+    image: entra-secret-watcher-rust:latest
     environment:
       Entra__TenantId: "tenant-a-id"
       Entra__TenantName: "Contoso"
       # ... other config
 
   watcher-fabrikam:
-    image: entra-secret-watcher:latest
+    image: entra-secret-watcher-rust:latest
     environment:
       Entra__TenantId: "tenant-b-id"
       Entra__TenantName: "Fabrikam"

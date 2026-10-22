@@ -16,7 +16,7 @@ configured only through environment variables (`Section__Key`, see `src/config.r
 cargo test                                   # all tests, no network or credentials needed
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings    # CI treats warnings as errors
-docker build -t entra-secret-watcher .       # ~18 MB Alpine image, musl static binary
+docker build -t entra-secret-watcher-rust .       # ~18 MB Alpine image, musl static binary
 ```
 
 On this Windows machine the MSVC build tools are incomplete (no `lib\x64`, so `link.exe` cannot find `msvcrt.lib`):
