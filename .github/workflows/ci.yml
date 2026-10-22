@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
   # ─── 1. Checks and tests ──────────────────────────────────────────────────────
   test:
@@ -32,21 +35,29 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-  # ─── 2. Docker publish ────────────────────────────────────────────────────────
-  publish:
-    name: Publish Docker image
+  # ─── 2. Docker image, one native build per architecture ───────────────────────
+  # Each architecture is compiled on a runner of that architecture: building arm64 under QEMU
+  # emulation makes a Rust release build take hours.
+  build:
+    name: Build image (${{ matrix.platform }})
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -58,44 +69,90 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
+      - name: Extract Docker metadata (labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.IMAGE }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The binary reports the version of the tag (v1.2.3 -> 1.2.3)
+          build-args: VERSION=${{ github.ref_name }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─── 3. Multi-arch manifest ───────────────────────────────────────────────────
+  publish:
+    name: Publish multi-arch image
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=raw,value=latest
 
-      - name: Build and push
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-          LABELS: ${{ steps.meta.outputs.labels }}
-          TAG: ${{ github.ref_name }}
+      - name: Create and push the manifest
+        working-directory: ${{ runner.temp }}/digests
         run: |
-          # The binary reports the version of the tag (v1.2.3 -> 1.2.3)
-          build_flags=(--build-arg "VERSION=${TAG#v}")
-          while IFS= read -r tag;   do [ -n "$tag" ]   && build_flags+=(--tag   "$tag");   done <<< "$TAGS"
-          while IFS= read -r label; do [ -n "$label" ] && build_flags+=(--label "$label"); done <<< "$LABELS"
+          # Word splitting is intended: one "-t <tag>" per tag, one "<image>@<digest>" per architecture
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${{ env.IMAGE }}@sha256:%s " *)
 
-          for attempt in 1 2 3; do
-            echo "=== Build attempt $attempt/3 ==="
-            if docker buildx build \
-                --platform linux/amd64,linux/arm64 \
-                --push \
-                "${build_flags[@]}" \
-                --cache-from type=gha \
-                --cache-to type=gha,mode=max \
-                .; then
-              exit 0
-            fi
-            [ "$attempt" -lt 3 ] && echo "Retrying in 90s (MCR rate limit)..." && sleep 90
-          done
-          exit 1
+      - name: Inspect the image
+        run: docker buildx imagetools inspect "${{ env.IMAGE }}:${{ steps.meta.outputs.version }}"
 
-  # ─── 3. GitHub Release ────────────────────────────────────────────────────────
+  # ─── 4. GitHub Release ────────────────────────────────────────────────────────
   release:
     name: GitHub Release
     needs: publish
