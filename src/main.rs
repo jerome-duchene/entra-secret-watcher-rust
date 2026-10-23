@@ -45,7 +45,7 @@ async fn run(config: Config) -> Result<()> {
         .timeout(Duration::from_secs(100))
         .user_agent(concat!("entra-secret-watcher/", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let graph = Arc::new(GraphClient::new(http.clone(), config.entra.clone()));
+    let graph = Arc::new(GraphClient::new(http.clone(), config.entra.clone()).with_metrics(metrics.clone()));
 
     let notification = config.notification.clone();
     let channels: Vec<Arc<dyn NotificationChannel>> = vec![
@@ -57,7 +57,7 @@ async fn run(config: Config) -> Result<()> {
 
     let job = Arc::new(CredentialScanJob::new(
         GraphCredentialScanner::new(graph, config.entra.clone(), config.watcher.clone()),
-        NotificationDispatcher::new(channels, config.watcher.grouped_report),
+        NotificationDispatcher::new(channels, config.watcher.grouped_report).with_metrics(metrics.clone()),
         metrics.clone(),
         config.watcher.clone(),
     ));

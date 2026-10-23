@@ -228,7 +228,7 @@ fn register_gauges(provider: &SdkMeterProvider, metrics: Arc<ScanMetrics>) {
         })
         .build();
 
-    let m = metrics;
+    let m = metrics.clone();
     meter
         .i64_observable_gauge(metrics::LAST_SCAN_SUCCESS.0)
         .with_description(metrics::LAST_SCAN_SUCCESS.1)
@@ -236,6 +236,62 @@ fn register_gauges(provider: &SdkMeterProvider, metrics: Arc<ScanMetrics>) {
             if let Some(success) = m.snapshot().last_scan_success {
                 observer.observe(i64::from(success), &tenant_tags(&m));
             }
+        })
+        .build();
+
+    register_application_metrics(&meter, metrics);
+}
+
+/// Application health (counters, scan duration, process start, version): same names as `/metrics`.
+fn register_application_metrics(meter: &opentelemetry::metrics::Meter, metrics: Arc<ScanMetrics>) {
+    let tenant_tags = |m: &ScanMetrics| {
+        vec![
+            KeyValue::new("tenant_name", m.tenant_name().to_string()),
+            KeyValue::new("tenant_id", m.tenant_id().to_string()),
+        ]
+    };
+
+    for (name, description) in metrics::COUNTERS {
+        let m = metrics.clone();
+        meter
+            .u64_observable_counter(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                for ((_, series), value) in m.activity().counters.iter().filter(|((n, _), _)| *n == name) {
+                    let mut tags = tenant_tags(&m);
+                    tags.extend(series.iter().map(|(k, v)| KeyValue::new(*k, v.clone())));
+                    observer.observe(*value, &tags);
+                }
+            })
+            .build();
+    }
+
+    let m = metrics.clone();
+    meter
+        .f64_observable_gauge(metrics::LAST_SCAN_DURATION.0)
+        .with_description(metrics::LAST_SCAN_DURATION.1)
+        .with_callback(move |observer| {
+            if let Some(duration) = m.activity().last_scan_duration {
+                observer.observe(duration.as_secs_f64(), &tenant_tags(&m));
+            }
+        })
+        .build();
+
+    let m = metrics.clone();
+    meter
+        .i64_observable_gauge(metrics::PROCESS_START_TIME.0)
+        .with_description(metrics::PROCESS_START_TIME.1)
+        .with_callback(move |observer| observer.observe(m.started_at(), &tenant_tags(&m)))
+        .build();
+
+    let m = metrics;
+    meter
+        .i64_observable_gauge(metrics::BUILD_INFO.0)
+        .with_description(metrics::BUILD_INFO.1)
+        .with_callback(move |observer| {
+            let mut tags = tenant_tags(&m);
+            tags.push(KeyValue::new("version", env!("CARGO_PKG_VERSION")));
+            observer.observe(1, &tags);
         })
         .build();
 }

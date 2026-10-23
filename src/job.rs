@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
 use tracing::{error, info, instrument, warn};
@@ -34,7 +35,12 @@ impl CredentialScanJob {
     pub async fn execute(&self) -> Result<()> {
         info!("Credential scan job started (DryRun: {})", self.options.dry_run);
 
-        let result = match self.scanner.scan().await {
+        let started = Instant::now();
+        let scan = self.scanner.scan().await;
+        self.metrics.record_scan_duration(started.elapsed());
+        self.metrics.count_scan(scan.is_ok());
+
+        let result = match scan {
             Ok(result) => result,
             Err(e) => {
                 self.metrics.record_failure();

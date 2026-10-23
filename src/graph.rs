@@ -2,6 +2,7 @@
 //!
 //! No retry on purpose: `sendMail` is not idempotent, a retry could send a duplicate email.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::config::EntraOptions;
+use crate::metrics::ScanMetrics;
 
 const GRAPH_URL: &str = "https://graph.microsoft.com/v1.0";
 const LOGIN_URL: &str = "https://login.microsoftonline.com";
@@ -58,6 +60,7 @@ pub struct GraphClient {
     graph_url: String,
     login_url: String,
     token: Mutex<Option<CachedToken>>,
+    metrics: Option<Arc<ScanMetrics>>,
 }
 
 impl GraphClient {
@@ -72,7 +75,14 @@ impl GraphClient {
             graph_url: graph_url.trim_end_matches('/').to_string(),
             login_url: login_url.trim_end_matches('/').to_string(),
             token: Mutex::new(None),
+            metrics: None,
         }
+    }
+
+    /// Counts every Graph call per result (a failed token acquisition counts as a failed call).
+    pub fn with_metrics(mut self, metrics: Arc<ScanMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Every app registration with its secrets and certificates, following the pagination.
@@ -109,6 +119,14 @@ impl GraphClient {
     }
 
     async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+        let response = self.call(request).await;
+        if let Some(metrics) = &self.metrics {
+            metrics.count_graph_request(response.is_ok());
+        }
+        response
+    }
+
+    async fn call(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         let token = self.access_token().await?;
         let response = request.bearer_auth(token).send().await.context("Graph request failed")?;
         let status = response.status();

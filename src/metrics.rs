@@ -6,8 +6,10 @@
 //! between two scans. Every series carries the `tenant_name` and `tenant_id` labels so that several
 //! instances (one container per tenant) can be told apart whatever the collection path.
 
+use std::collections::BTreeMap;
 use std::fmt::Write;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use chrono::Utc;
 
@@ -24,6 +26,32 @@ pub const APPS_SCANNED: (&str, &str) = ("esw_apps_scanned", "Number of app regis
 pub const LAST_SCAN_TIMESTAMP: (&str, &str) =
     ("esw_last_scan_timestamp_seconds", "Unix timestamp of the last scan attempt.");
 pub const LAST_SCAN_SUCCESS: (&str, &str) = ("esw_last_scan_success", "1 if the last scan succeeded, 0 otherwise.");
+
+// Application health: unlike the figures above, these say nothing about the credentials themselves.
+pub const SCANS_TOTAL: (&str, &str) = ("esw_scans_total", "Scans run since the process started, by result.");
+pub const NOTIFICATIONS_TOTAL: (&str, &str) =
+    ("esw_notifications_total", "Notifications attempted since the process started, by channel and result.");
+pub const GRAPH_REQUESTS_TOTAL: (&str, &str) =
+    ("esw_graph_requests_total", "Microsoft Graph calls made since the process started, by result.");
+/// The counters, in the order they are rendered.
+pub const COUNTERS: [(&str, &str); 3] = [SCANS_TOTAL, NOTIFICATIONS_TOTAL, GRAPH_REQUESTS_TOTAL];
+pub const LAST_SCAN_DURATION: (&str, &str) =
+    ("esw_last_scan_duration_seconds", "Duration of the last scan attempt, in seconds.");
+pub const PROCESS_START_TIME: (&str, &str) =
+    ("esw_process_start_time_seconds", "Unix timestamp of the start of the process.");
+pub const BUILD_INFO: (&str, &str) = ("esw_build_info", "Version of the running application (always 1).");
+
+pub const RESULT_SUCCESS: &str = "success";
+pub const RESULT_FAILURE: &str = "failure";
+
+/// A counter series: its metric name and its labels, in a stable order.
+pub type Series = (&'static str, Vec<(&'static str, String)>);
+
+#[derive(Debug, Clone, Default)]
+pub struct Activity {
+    pub counters: BTreeMap<Series, u64>,
+    pub last_scan_duration: Option<Duration>,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
@@ -42,11 +70,19 @@ pub struct ScanMetrics {
     tenant_name: String,
     tenant_id: String,
     snapshot: RwLock<Snapshot>,
+    activity: Mutex<Activity>,
+    started_at: i64,
 }
 
 impl ScanMetrics {
     pub fn new(tenant_name: impl Into<String>, tenant_id: impl Into<String>) -> Self {
-        Self { tenant_name: tenant_name.into(), tenant_id: tenant_id.into(), snapshot: RwLock::default() }
+        Self {
+            tenant_name: tenant_name.into(),
+            tenant_id: tenant_id.into(),
+            snapshot: RwLock::default(),
+            activity: Mutex::default(),
+            started_at: Utc::now().timestamp(),
+        }
     }
 
     pub fn tenant_name(&self) -> &str {
@@ -59,6 +95,34 @@ impl ScanMetrics {
 
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn activity(&self) -> Activity {
+        self.activity.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn started_at(&self) -> i64 {
+        self.started_at
+    }
+
+    pub fn count_scan(&self, success: bool) {
+        self.count(SCANS_TOTAL.0, vec![("result", result_label(success).into())]);
+    }
+
+    pub fn count_notification(&self, channel: &str, success: bool) {
+        self.count(NOTIFICATIONS_TOTAL.0, vec![("channel", channel.into()), ("result", result_label(success).into())]);
+    }
+
+    pub fn count_graph_request(&self, success: bool) {
+        self.count(GRAPH_REQUESTS_TOTAL.0, vec![("result", result_label(success).into())]);
+    }
+
+    pub fn record_scan_duration(&self, duration: Duration) {
+        self.activity.lock().unwrap_or_else(|e| e.into_inner()).last_scan_duration = Some(duration);
+    }
+
+    fn count(&self, metric: &'static str, labels: Vec<(&'static str, String)>) {
+        *self.activity.lock().unwrap_or_else(|e| e.into_inner()).counters.entry((metric, labels)).or_default() += 1;
     }
 
     pub fn record_success(&self, result: &ScanResult) {
@@ -114,16 +178,44 @@ impl ScanMetrics {
                 sample(&mut out, metric.0, &tenant, value);
             }
         }
+
+        let activity = self.activity();
+        for metric in COUNTERS {
+            header_of_kind(&mut out, metric, "counter");
+            for ((_, series), value) in activity.counters.iter().filter(|((name, _), _)| *name == metric.0) {
+                let labels: Vec<(&str, &str)> =
+                    tenant.iter().copied().chain(series.iter().map(|(k, v)| (*k, v.as_str()))).collect();
+                sample(&mut out, metric.0, &labels, value);
+            }
+        }
+
+        header(&mut out, LAST_SCAN_DURATION);
+        if let Some(duration) = activity.last_scan_duration {
+            sample(&mut out, LAST_SCAN_DURATION.0, &tenant, duration.as_secs_f64());
+        }
+        header(&mut out, PROCESS_START_TIME);
+        sample(&mut out, PROCESS_START_TIME.0, &tenant, self.started_at);
+        header(&mut out, BUILD_INFO);
+        let build = [tenant[0], tenant[1], ("version", env!("CARGO_PKG_VERSION"))];
+        sample(&mut out, BUILD_INFO.0, &build, 1);
         out
     }
 }
 
-fn header(out: &mut String, (name, help): (&str, &str)) {
-    let _ = writeln!(out, "# HELP {name} {help}");
-    let _ = writeln!(out, "# TYPE {name} gauge");
+fn header(out: &mut String, metric: (&str, &str)) {
+    header_of_kind(out, metric, "gauge");
 }
 
-fn sample(out: &mut String, name: &str, labels: &[(&str, &str)], value: i64) {
+fn header_of_kind(out: &mut String, (name, help): (&str, &str), kind: &str) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} {kind}");
+}
+
+fn result_label(success: bool) -> &'static str {
+    if success { RESULT_SUCCESS } else { RESULT_FAILURE }
+}
+
+fn sample(out: &mut String, name: &str, labels: &[(&str, &str)], value: impl std::fmt::Display) {
     let labels = labels.iter().map(|(k, v)| format!("{k}=\"{}\"", escape_label_value(v))).collect::<Vec<_>>().join(",");
     let _ = writeln!(out, "{name}{{{labels}}} {value}");
 }

@@ -9,6 +9,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tracing::{error, info, warn};
 
+use crate::metrics::ScanMetrics;
 use crate::models::ScanResult;
 
 #[async_trait]
@@ -22,11 +23,18 @@ pub trait NotificationChannel: Send + Sync {
 pub struct NotificationDispatcher {
     channels: Vec<Arc<dyn NotificationChannel>>,
     grouped_report: bool,
+    metrics: Option<Arc<ScanMetrics>>,
 }
 
 impl NotificationDispatcher {
     pub fn new(channels: Vec<Arc<dyn NotificationChannel>>, grouped_report: bool) -> Self {
-        Self { channels, grouped_report }
+        Self { channels, grouped_report, metrics: None }
+    }
+
+    /// Counts every attempt per channel and result.
+    pub fn with_metrics(mut self, metrics: Arc<ScanMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     pub async fn dispatch(&self, result: &ScanResult) {
@@ -46,7 +54,11 @@ impl NotificationDispatcher {
         for batch in &batches {
             for channel in &enabled {
                 info!("Sending notification via {}", channel.name());
-                match channel.send(batch).await {
+                let sent = channel.send(batch).await;
+                if let Some(metrics) = &self.metrics {
+                    metrics.count_notification(channel.name(), sent.is_ok());
+                }
+                match sent {
                     Ok(()) => info!("Notification sent successfully via {}", channel.name()),
                     Err(e) => error!("Failed to send notification via {}: {e:#}", channel.name()),
                 }
