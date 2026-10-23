@@ -199,6 +199,18 @@ They can also be **pushed** over OTLP, see [OpenTelemetry](#opentelemetry-otlp-p
 | `esw_last_scan_timestamp_seconds` | Unix timestamp of the last scan attempt |
 | `esw_last_scan_success` | `1` if the last scan succeeded, `0` otherwise |
 
+Application health, independent from the credentials. The counters start at 0 with the process (use
+`increase()`), and a series only appears after its first event:
+
+| Metric | Description |
+|--------|-------------|
+| `esw_scans_total{result}` | Scans run since the process started (`result`: `success` or `failure`) |
+| `esw_notifications_total{channel,result}` | Notification attempts per channel (`Gotify`, `Email`, `Teams`, `Webhook`) |
+| `esw_graph_requests_total{result}` | Microsoft Graph calls (a failed token acquisition counts as a failed call) |
+| `esw_last_scan_duration_seconds` | Duration of the last scan attempt |
+| `esw_process_start_time_seconds` | Unix timestamp of the start of the process: its changes are the restarts |
+| `esw_build_info{version}` | Always `1`, carries the running version |
+
 **Every `esw_*` series carries the labels `tenant_name` and `tenant_id`** (from `Entra__TenantName` and
 `Entra__TenantId`). With one container per tenant, this is what lets you filter dashboards and route
 alerts per tenant, whether Prometheus scrapes `/metrics` or the metrics are pushed over OTLP.
@@ -246,8 +258,8 @@ groups:
         labels: { severity: warning }
 ```
 
-A ready-to-use **Grafana dashboard** (all tenants in one dashboard, filterable per tenant) is available in
-[`grafana/`](grafana/README.md).
+Two ready-to-use **Grafana dashboards** (all tenants in one dashboard, filterable per tenant) are available in
+[`grafana/`](grafana/README.md): one for the credentials, one for the health of the application.
 
 > **One ticket per credential instead of a daily notification?** Prometheus Alertmanager
 > deduplicates alerts and can open a ticket once (e.g. with its Jira receiver). Alternatively use the

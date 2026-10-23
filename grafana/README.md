@@ -1,6 +1,13 @@
-# Grafana dashboard
+# Grafana dashboards
 
-[`entra-secret-watcher.json`](entra-secret-watcher.json) is a ready-to-use dashboard for the metrics,
+Two ready-to-use dashboards, to import independently:
+
+| Dashboard | File | Answers |
+|-----------|------|---------|
+| **Entra Secret Watcher** | [`entra-secret-watcher.json`](entra-secret-watcher.json) | What expires, and when? (the business value) |
+| **Entra Secret Watcher - Application** | [`entra-secret-watcher-app.json`](entra-secret-watcher-app.json) | Is the watcher itself healthy? (see [below](#application-dashboard)) |
+
+The first one covers the metrics,
 logs and traces of Entra Secret Watcher, whether they reach Prometheus through
 [Grafana Alloy (OTLP push)](../README.md#opentelemetry-otlp-push) or through a
 [Prometheus scrape of `/metrics`](../README.md#prometheus-metrics).
@@ -60,8 +67,33 @@ works with any datasource names. It has the fixed uid `entra-secret-watcher`.
   daily schedule. Adapt them to your `Watcher__CronSchedule`.
 - **Days left** colours: red when expired, orange up to 14 days, yellow up to 30, green beyond.
 
+## Application dashboard
+
+[`entra-secret-watcher-app.json`](entra-secret-watcher-app.json) (uid `entra-secret-watcher-app`) looks at the
+application, not at the credentials. Same datasource variables and **Tenant** filter as the first dashboard.
+
+| Row | Panel | Source |
+|-----|-------|--------|
+| Health | Version, Uptime, Restarts, Failed scans, Failed notifications, Graph error rate (over the selected time range) | Prometheus |
+| Scans and Microsoft Graph | Scans per result, Scan duration, Graph calls per result | Prometheus |
+| Notifications | Attempts per channel and result, totals since the last restart | Prometheus |
+| Errors (Loki) | Errors and warnings over time, Log volume by level, Error logs | Loki *(optional)* |
+| Traces (Tempo) | Traces in error, Slowest scans (> 10 s) | Tempo *(optional)* |
+
+- The counters (`esw_scans_total`, `esw_notifications_total`, `esw_graph_requests_total`) start at 0 with the
+  process and a series only exists after its first event, so panels show nothing until a scan has happened.
+- **Errors (Loki)** relies on the `detected_level` that Loki 3 adds to every log line. With an older Loki, or
+  streams labelled differently, edit the *Errors pipeline* variable (default `| detected_level="error"`), and
+  the two queries of *Errors and warnings*.
+- **Memory and CPU** of the container are not exposed by the application: use cAdvisor or your container
+  runtime's metrics next to this dashboard.
+- Useful alerts: a failed scan (`increase(esw_scans_total{result="failure"}[1d]) > 0`), a failed notification
+  (`increase(esw_notifications_total{result="failure"}[1d]) > 0`) and a restart loop
+  (`changes(esw_process_start_time_seconds[1h]) > 2`).
+
 ## Tested with
 
-The Prometheus panels were checked against Grafana (latest image at the time of writing) with a
-Prometheus scraping sample `esw_*` series for two tenants. The Loki and Tempo panels were not tested
-against real data.
+The Prometheus panels of the first dashboard were checked against Grafana (latest image at the time of
+writing) with a Prometheus scraping sample `esw_*` series for two tenants. The Loki and Tempo panels were not
+tested against real data, and the application dashboard has not been imported into Grafana yet: only its
+JSON validity and the metrics it relies on (unit tests) were checked.
