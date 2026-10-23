@@ -62,7 +62,14 @@ impl WebhookChannel {
         if !self.options.secret.is_empty() {
             request = request.header(&self.options.secret_header_name, &self.options.secret);
         }
-        request.send().await?.error_for_status()?;
+        let response = request.send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            // The receiver usually explains a rejection in the body, which error_for_status() would drop
+            let body = response.text().await.unwrap_or_default();
+            let body: String = body.chars().take(500).collect();
+            bail!("HTTP status {status} for url ({}): {body}", self.options.url);
+        }
         Ok(())
     }
 }
